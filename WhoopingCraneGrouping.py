@@ -1,56 +1,56 @@
-#DTW  & DBSCAN 
+#To be 100% transparent, this script should probably be broken into 3-4 separates scripts
+#It was just easier for me to have it all in once place as I was working on it.
 import pandas as pd
 import numpy as np
-import math
 import networkx as nx
 import matplotlib.pyplot as plt
 import helperFunctions as hf
 from dateutil.relativedelta import relativedelta
-import json
-
 
 #getting data into pandas
-#this is the output from a sql query that pulls from our azure database
+#this is the output from the final sql query that pulls from our azure database of all the bird data
 df = pd.read_csv('D:/511_Project/FinalQueryResults.csv')
+#df = pd.read_csv('D:/511_Project/Goose_and_eagle.csv') # this is a special subset of hand selected data
 #just checking to make sure we dont have any duplicate data
 df = df.drop_duplicates()
 #converting datatypes
 df['EVENT_DATE']= pd.to_datetime(df['EVENT_DATE'],format='%m/%d/%Y')
-#thresholds used to define the flocks (if a bird is seen within a few miles of another bird within a few days of each other then we can say theyre friends)
+#thresholds used to define the flocks (if a bird is seen within a few kilometers of another bird within a few days of each other then we can say theyre friends)
 time_threshold = 2 #days
-dist_threshold = 5 #miles
-
+dist_threshold = 5 #kilometers
 
 #tag flocks for each bird species
 #2040 = Whooping Crane; 3490 = Golden Eagle; 1940 = Blue Heron; 1720 = canada goose
-for s in [2040,3490,1940]:
+for s in [2040,3490,1940,1720]:
     #specifiy which species we are looking at
     #filter all the query data to just the species we are looking at
     dat = df[df['SPECIES_ID']==s]
     dat = dat.sort_values(by=['EVENT_DATE'])
-    #get a list of all the unique bird of that species
-    birds = list(dat['ORIGINAL_BAND'].unique())
+    #create an empty list to store the links between birds that are found later
     friends = []
     print('starting on species code ' + str(s))
     #for each bird
-    for b in birds:
-        #for each sighting
+    for b in list(dat['ORIGINAL_BAND'].unique()):
+        #get every time we see this individual bird
         bird_dat = dat[dat['ORIGINAL_BAND']==b]
-        events = list(bird_dat['EVENT_DATE'].unique())
-        for e in events:
+        #take a look at each time we see this individual bird
+        for e in list(bird_dat['EVENT_DATE'].unique()):
+            #expand our search window aroudn the particular event we are looking at
             #get other events around that time (plus or minus the time threshold)
             event_dat = dat[(dat['EVENT_DATE'] > (e - pd.Timedelta(days=time_threshold))) & (dat['EVENT_DATE'] <= (e + pd.Timedelta(days=time_threshold)))]
-            #extract the original coordinates for this sighting event
+            #extract the original coordinates for this individual bird and this specific sighting event
             orig_coords = (event_dat[(event_dat['ORIGINAL_BAND']==b)&(event_dat['EVENT_DATE']==e)].iloc[0,3],event_dat[(event_dat['ORIGINAL_BAND']==b)&(event_dat['EVENT_DATE']==e)].iloc[0,4])
-            #see if any of those events are close to this event, but ignore the event in question because we dont need to double count it
+            #ignore the current event in question because we dont want to double count it
             event_dat = event_dat[event_dat['ORIGINAL_BAND']!=b]
+            #see if any of the remaining events are close in distance to the coordinates for this specific event 
             for i in range(0,event_dat.shape[0]-1):
+                #extract the coordinates for any sighting event that were within the time window
                 test_coords = (event_dat.iloc[i,3],event_dat.iloc[i,4])
-                #create link between two birds
+                #create link between two birds if the coordinates are within the distance threshold
                 if hf.areSameFlock(orig_coords,test_coords,dist_threshold):
                     friends.append([b,event_dat.iloc[i,1]])
-    #look at link lists to try to determind flocks
     print('finished tagging each bird of this species')
+    #look at link lists to try to determind flocks
     #turn all the links between birds into a new dataframe while swapping the order of any birds to make deduplicating possible next line
     flock_df = pd.DataFrame(hf.reorder(friends), columns=['from', 'to'])
     flock_df = flock_df.drop_duplicates()
@@ -84,28 +84,28 @@ for s in [2040,3490,1940]:
 
 
 #clear any large variable
-del df, dat, flock_df,birds,friends,groups
+del df, dat, flock_df,friends,groups
 
 # read in EIA generation Data this was processed using their API in the eiaData.py file
 EIA_df = pd.read_csv('D:/511_Project/Formated_GeneratorData.csv')
 # filter to generator types that would have a plausible effect on birds
 EIA_df = EIA_df[EIA_df['Category'].isin(['Hydro','Coal','Petroleum','Wind'])]
+#converting datatypes
 EIA_df['date']= pd.to_datetime(EIA_df['date'],format='%Y-%m')
 #variable and DataFrame initialization
 nodeId = 0
-nodeCols = ['record_id','species','flock','nbirds','latitude','longitude','date','isoCountry']
-#edgeCols = ['species','flock','source','target','totalDistance','ewDistance','nsDistance','heading','fossilCount','windCount','hydroCount','borderCount']
+nodeCols = ['record_id','species','flock','nbirds','latitude','longitude','date','isoCountry','band']
 nodes = pd.DataFrame(columns = nodeCols)
-#edges = pd.DataFrame(columns = edgeCols)
 edgeJsonCols = ['species','flock','date','coords','fossilCount','windCount','borderCount','hydroCount','distanceCount','nbirds']
 edges_json = pd.DataFrame(columns = edgeJsonCols)
 #this loop condensces all geospacial data into a pretty line for graphing
-for s in ['Whooping_Crane','Golden_eagle','Blue_Heron']:#,'Canada_Goose']:#    'Canada_Goose',
-    #Read in relevant bird sighting data
+for s in ['Whooping_Crane','Golden_Eagle','Blue_Heron']:
+    #Read in preprocessed bird sighting data
     fp = 'D:/511_Project/Processed_Data/'+s+'/flockTest.csv'
     df = pd.read_csv(fp)
     #convert to datetime for utility
     df['EVENT_DATE']= pd.to_datetime(df['EVENT_DATE'],format='%Y-%m-%d')
+    # start looking at flocks instead of individual birds
     for f in list(df['flock'].unique()):
         #when looking at a flock we need to get the geospacial midpoint of any sightings from that flock
         if f>0:
@@ -120,10 +120,12 @@ for s in ['Whooping_Crane','Golden_eagle','Blue_Heron']:#,'Canada_Goose']:#    '
             year,month = min(flock_dat['EVENT_DATE']).year,min(flock_dat['EVENT_DATE']).month
             date = pd.to_datetime(str(year)+'-'+str(month)+'-1')
             while date <= max(flock_dat['EVENT_DATE']):
+                #intiialize counters to track the features we are interested in
                 FossilCounter = 0
                 WindCounter = 0
                 HydroCounter = 0
                 BorderCounter = 0
+                #filter the bird dataframe to only sighting events within the year and month the loop is looking at
                 month_dat = flock_dat[(flock_dat['EVENT_DATE'].dt.year==year) & (flock_dat['EVENT_DATE'].dt.month==month)]
                 #weighted avg by more prevalent birds? # http://www.geomidpoint.com/calculation.html
                 points = list(zip(month_dat['LAT_DD'], month_dat['LON_DD'], month_dat['SIGHTINGS']))
@@ -147,9 +149,10 @@ for s in ['Whooping_Crane','Golden_eagle','Blue_Heron']:#,'Canada_Goose']:#    '
                 key = nodeId
                 nodeId += 1
                 #log point data: nodeid, species, flock, n-birds, lat, lon, date
-                node_row = [key,s,f,month_dat.shape[0],mid_lat,mid_lon,date,country]
+                node_row = [key,s,f,month_dat.shape[0],mid_lat,mid_lon,date,country,list(df['flock'])[0]]
                 #append rows to data_frames
                 nodes = pd.concat([nodes, pd.DataFrame(columns = nodeCols,data = [node_row])], ignore_index=True)
+                #check if this is the first point in the loop, if it isnt then generate route segment data
                 if lastPoint != (0,0):
                     #calculate the haversine distances between the last point and the current one.
                     #decompone to understand the directional components and the direction of travel
@@ -170,7 +173,7 @@ for s in ['Whooping_Crane','Golden_eagle','Blue_Heron']:#,'Canada_Goose']:#    '
                     rect_mask = (
                         EIA_df['latitude'].between(lat_min, lat_max) & EIA_df['longitude'].between(lon_min, lon_max)
                     )
-                    #filter generators by 
+                    #filter generators using the GPS rectangle boundary mask
                     df_rect = EIA_df[rect_mask].copy()
                     #filter out generator not built yet
                     df_rect = df_rect[df_rect['date']<=date]
@@ -179,6 +182,7 @@ for s in ['Whooping_Crane','Golden_eagle','Blue_Heron']:#,'Canada_Goose']:#    '
                         gen_lat = df_rect.iloc[g][0]
                         gen_lon = df_rect.iloc[g][1]
                         #this function sees if any are within 10km of the start position, end position, or along the path between and increments the approriate counter based on the type
+                        #wind farms need more area for the same nameplate capacity so their threshold is bumped up to 20km
                         if(hf.min_distance_to_path(lastPoint[0],lastPoint[1],mid_lat,mid_lon,gen_lat,gen_lon)<10.1 and (df_rect.iloc[g][6] == 'Coal' or df_rect.iloc[g][6] == 'Petroleum')):
                             FossilCounter += 1
                         if(hf.min_distance_to_path(lastPoint[0],lastPoint[1],mid_lat,mid_lon,gen_lat,gen_lon)<20.1 and (df_rect.iloc[g][6] == 'Wind')):
@@ -186,10 +190,8 @@ for s in ['Whooping_Crane','Golden_eagle','Blue_Heron']:#,'Canada_Goose']:#    '
                     if lastCountry!=country or month_dat['ISO_COUNTRY'].nunique()>1:
                         BorderCounter += 1
                     #log edge data: species, flock, source, target, distance, ew_dist,ns_dist, heading, fossil fuel counter, wind farm counter, border_crossing counter
-                    #edge_row = [s,f,lastKey,key,total_dist,ew_dist,ns_dist,heading,FossilCounter,WindCounter,HydroCounter,BorderCounter]
                     edge_row_json = [s,f,date - pd.DateOffset(months=1),[[lastPoint[1],lastPoint[0]],[mid_lon,mid_lat]],FossilCounter,WindCounter,BorderCounter,HydroCounter,total_dist,nbirds]
                     #append rows to data_frames
-                    #edges = pd.concat([edges, pd.DataFrame(columns = edgeCols,data = [edge_row])], ignore_index=True)
                     edges_json = pd.concat([edges_json, pd.DataFrame(columns = edgeJsonCols,data = [edge_row_json])], ignore_index=True)                      
                 #increment data
                 lastKey = key
@@ -201,6 +203,8 @@ for s in ['Whooping_Crane','Golden_eagle','Blue_Heron']:#,'Canada_Goose']:#    '
                 else:
                     month += 1
                 date = pd.to_datetime(str(year)+'-'+str(month)+'-1')
+        #this runs the same code but for individual birs that do not have the same flock so I won't be commenting it again, all the logic is identical
+        #it could probably be turned into a function for aesthetics eventually
         else:
             for b in list(df['ORIGINAL_BAND'].unique()):
                 #inits - to be used once looking at flight segments
@@ -240,7 +244,7 @@ for s in ['Whooping_Crane','Golden_eagle','Blue_Heron']:#,'Canada_Goose']:#    '
                     key = nodeId
                     nodeId += 1
                     #log point data: nodeid, species, flock, n-birds, lat, lon, date
-                    node_row = [key,s,f,month_dat.shape[0],mid_lat,mid_lon,date,country]
+                    node_row = [key,s,f,month_dat.shape[0],mid_lat,mid_lon,date,country,b]
                     #append rows to data_frames
                     nodes = pd.concat([nodes, pd.DataFrame(columns = nodeCols,data = [node_row])], ignore_index=True)
                     if lastPoint != (0,0):
@@ -296,22 +300,24 @@ for s in ['Whooping_Crane','Golden_eagle','Blue_Heron']:#,'Canada_Goose']:#    '
                     date = pd.to_datetime(str(year)+'-'+str(month)+'-1')
 #write data out to summary files
 nodes.to_csv('D:/511_Project/Processed_Data/nodes.csv',index = False)
+#tsv for debugging and json for use with the final visual
 edges_json.to_csv('D:/511_Project/Processed_Data/edges.tsv',sep='\t',index = False)
 edges_json.to_json('D:/511_Project/Processed_Data/json/merged_migration.json')
 
-
-
-
 #select best examples by species
-df = edges_json
+#this could probably be its own script too
+#df = pd.read_csv('D:/511_Project/Processed_Data/edges.tsv',sep='\t')
+df = edges_json# could read inthe data that was written out from the last section
+#create a dataframe to organize the the birds that will show up best on our chart.
 selectionCols = ['species','flock','nbirds','duration','continuity_%']
 selectionDF = pd.DataFrame(columns = selectionCols)
 for s in list(df['species'].unique()):
-    #selectionCols = ['species','id','nbirds','duration','continuity_%']
-    #selectionDF = pd.DataFrame(columns = selectionCols)
     for i in list(df['flock'].unique()):
+        #filter data to an individual species, flock pair
         points = df[(df['species']==s) & (df['flock']==i)].shape[0]
+        #make sure we have more than one route segment
         if points > 1 :
+            #these are all features I was exploring to determine what would best visualize the birds.
             nbirds = df[(df['species']==s) & (df['flock']==i)]['nbirds'].max()
             minDate = df[(df['species']==s) & (df['flock']==i)]['date'].min()
             maxDate = df[(df['species']==s) & (df['flock']==i)]['date'].max()
@@ -319,11 +325,11 @@ for s in list(df['species'].unique()):
             continuity = (points*100.0)/duration
             selectionRow = [s,i,nbirds,duration,continuity]
             selectionDF = pd.concat([selectionDF, pd.DataFrame(columns = selectionCols,data = [selectionRow])], ignore_index=True)
+    #Ultimately I decided that the best data was data that was on the screen for the longest and was moving for the largest percentage of that time
     selectionDF = selectionDF[(selectionDF['duration'] > 36) & (selectionDF['continuity_%'] > 10)].sort_values(by=['duration'],ascending = False)
-
 #set best example to 1, second best to 2, etc.
 top_rows = selectionDF.sort_values(by=['species','continuity_%'],ascending = False).groupby('species').head(5)
-top_rows['exampleRank'] = top_rows.groupby('species').cumcount() + 1
+top_rows['exampleRank'] = top_rows.groupby('species').cumcount() + 2
 #left join datasets to map the new example rank to the species flock
 selected = pd.merge(edges_json,top_rows,on =['species','flock'],how='left')
 #filter out all the unranked data
@@ -331,32 +337,46 @@ selected = selected[selected['exampleRank']>0]
 #filter selected columns here and rename flock to exampleRank
 del selected['nbirds_y'], selected['index']
 selected.rename(columns={'nbirds_y':'nbirds','flock':'id','exampleRank':'flock'}, inplace=True)
+#format the data and write it out for the last time, this is the final dataframe we ended up visualizing
 selected = selected.reset_index()
 selected.to_csv('D:/511_Project/Processed_Data/edges_final.tsv',sep='\t',index = False)
 selected.to_json('D:/511_Project/Processed_Data/json/merged_migration_final.json')
 
+#this code never ended up giving us what we wanted to see
+#it was intended to summarize a species-flock's migrations per year
+#I think the underlying data inconsistency doomed it
+#this could be its own script as well
 #read in DFs
+#selected = pd.read_csv('D:/511_Project/Processed_Data/edges_final.tsv',sep='\t')
+#initialize summary dataframes
 migrationCols = ['species','flock','year', 'season','observations','Dest_coords']
 migrationDF = pd.DataFrame(columns = migrationCols)
-for s in selected['species'].unique():
+#this first loop identifies migration destinations by season
+for s in list(selected['species'].unique()):
     dat = selected[selected['species'] == s]
-    for f in dat['flock'].unique():
+    for f in list(dat['flock'].unique()):
+        #filter data to an individual species, flock pair
         flock_dat = dat[dat['flock'] == f]
+        #get the first year and season that this bird/flock was seen
         year = min(flock_dat['date']).year
         if min(flock_dat['date']).month >4 and min(flock_dat['date']).month <11:
             season = 'summer'
         else:
             season = 'winter'
-        print(s+'-'+str(f))
+        #we want to look season by season year after year and check if there is enough data
+        #to generate any summary statistics about that year and that seasons's migration
         while year <= max(flock_dat['date']).year:
+            #if its summer we want to filter to the relevant summer months, otherwise weant to 
+            #filter to the relevant witnther months with some buffer in both cases
             if season == 'summer':
                 season_dat = flock_dat[(flock_dat['date'] >= pd.to_datetime(str(year)+'-4-1')) & (flock_dat['date'] <= pd.to_datetime(str(year)+'-10-1'))]
             else:
                 season_dat = flock_dat[(flock_dat['date'] >= pd.to_datetime(str(year-1)+'-10-1')) & (flock_dat['date'] <= pd.to_datetime(str(year)+'-4-1'))]
             observations = season_dat.shape[0]
-            #avg bird migrations [3->6 & 8->11]
+            #avg bird migration months [3->6 & 8->11]
+            # we only give migration summary stats if there's more than 2 routes seen within the 7 month span
             if observations > 2:
-                #get northern most point
+                #if we have lots of points within the date range than the migration destination is where the bird is moving the least
                 #try to filter to points with least distance traveled
                 if season_dat[season_dat['distanceCount']<400].shape[0]>1:
                     points =[]
@@ -368,8 +388,9 @@ for s in selected['species'].unique():
                     mid_lat, mid_lon =  hf.geographic_midpoint(points)
                     dest_point = [mid_lat,mid_lon]
                     point_type = 'average'
-                #otherwise get the northern or southern most point seen in this timeframe
+                #otherwise get the northern or southern most point seen in this timeframe depending on the season we are looking for
                 else:
+                    #this could be made to look a lot better by making it a function
                     count = 0
                     if season == 'summer':
                         for p in season_dat['coords']:
@@ -392,23 +413,25 @@ for s in selected['species'].unique():
                                     dest_point = [p[1][1],p[1][0]]
                                     count+=1
                     point_type = 'individual'
+                #if there was data generated add it to the datastructure and then keep looping
                 print('found migration dat for ' + season + '-' + str(year) + ' as an ' + point_type)                    
-                migrationCols = ['species','flock','year', 'season','observations','Dest_coords']
                 migrationRow = [s,f,year,season,observations,dest_point]
                 migrationDF = pd.concat([migrationDF, pd.DataFrame(columns = migrationCols,data = [migrationRow])], ignore_index=True)
+            #increment the loop by jumping to the next consecutive season
             if season == 'summer':
                 year +=1
                 season = 'winter'
             else:
                 season = 'summer'
 
-
+#after getting the migration destination we want to scrub though that list to give context 
+#to the actual flight routes to and from the destinations identified above
 for s in migrationDF['species'].unique():
     for f in migrationDF['flock'].unique():
         df = migrationDF[(migrationDF['species']== s) & ( migrationDF['flock'])==f]
         distances = []
         for c in range(1,df.shape[0]-1):
-            #print(str(df.iloc[c-1][2])+'-'+str(df.iloc[c][2])+'-'+str(df.iloc[c-1][3])+'-'+str(df.iloc[c][3]))
+            #we only want to generate statistics about a migration when we know they happend right after each other
             if hf.is_consecutive(df.iloc[c-1][2],df.iloc[c][2],df.iloc[c-1][3],df.iloc[c][3]):
                 tot_dist,ns_dist,ew_dist = hf.distance_components(df.iloc[c-1][5][0], df.iloc[c-1][5][1], df.iloc[c][5][0], df.iloc[c][5][1])
                 distances.append(tot_dist)
