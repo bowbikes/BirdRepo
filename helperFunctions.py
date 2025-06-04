@@ -5,21 +5,25 @@ import pandas as pd
 from math import radians, sin, cos, atan2, sqrt, asin, acos, pi, degrees
 from datetime import datetime
 
-def diff_month(d1, d2):
-    return (d1.year - d2.year) * 12 + d1.month - d2.month
-
+# function that takes two sets of coordinates, calculates the distance between
+# them then returns true or false based on the provided distance threshold
 def areSameFlock(coords_1,coords_2,dist_threshold):
     if geopy.distance.geodesic(coords_1,coords_2).miles <dist_threshold:
         return True
     else:
         return False
 
+# function that takes a bird band id and a list of lists where each list in the list is a "flock" of birds
+# if the bird band is seen in one of the flock lists the then the function returns that "flock"'s index
+# it returns 0 for birds that were never seen in a flock
 def getFlockNumber(bird, flocks):
     for idx, flock in enumerate(flocks, start=1):
         if bird in flock:
             return idx
     return 0
 
+# This function takes a list of length 2 it can swaps the positions of the elements of the list
+# This ensures the list that is returned always has the smallest element first
 def reorder(lst):
     o_lst = []
     for f in lst:
@@ -29,7 +33,9 @@ def reorder(lst):
             o_lst.append(f)
     return(o_lst)
 
-
+# this migration handles the migration processing, it checks whether subsequent winter or summer migrations are consecutive
+# there were many data hole in our final data so to calculate acurate migratory distances we needed to know if the points
+# we identified were appropriate to calculate the distance between
 def is_consecutive(yr1,yr2,s1,s2):
     if yr1 == yr2 and s1 != s2 and s2 == 'summer':
         return True
@@ -38,6 +44,8 @@ def is_consecutive(yr1,yr2,s1,s2):
     else:
         return False
 
+# this function takes a list of coordinate pairs and calculates the midpoint of all of them.
+# we use it to get get a coordinate point that represents a flock and to aggregate a month's worth of observations into a single point
 def geographic_midpoint(
     points: List[Tuple[float, float, float]]
 ) -> Tuple[float, float]:
@@ -81,7 +89,8 @@ def geographic_midpoint(
     # to degrees
     return math.degrees(lat_mid), math.degrees(lon_mid)
 
-
+# this function takes a pair of coordinates and calculates the total distance between them as well as aproximating
+# the "vertical" and "horizontal" distance that was traveled.  we wanted this as migration tends to be mostly north south 
 def distance_components(lat1, lon1, lat2, lon2):
     # Earth’s radius in km
     R = 6371.0
@@ -106,10 +115,10 @@ def distance_components(lat1, lon1, lat2, lon2):
 
     return total_dist, ew_dist, ns_dist
 
+# the next set of functions were used to calculate the direction the bird was traveling in.
+# this was intended to be useful in tracking which segments were migration segments and which were destination
+# segments but our final data proved more inconsistent than would be necessary to use these
 def _central_angle(lat1, lon1, lat2, lon2):
-    """
-    Returns the central angle (in radians) between two lat/lon points.
-    """
     φ1, φ2 = radians(lat1), radians(lat2)
     Δφ = radians(lat2 - lat1)
     Δλ = radians(lon2 - lon1)
@@ -117,9 +126,6 @@ def _central_angle(lat1, lon1, lat2, lon2):
     return 2 * asin(sqrt(a))
 
 def _bearing(lat1, lon1, lat2, lon2):
-    """
-    Returns the initial bearing (in radians) from point 1 to point 2.
-    """
     φ1, φ2 = radians(lat1), radians(lat2)
     Δλ = radians(lon2 - lon1)
     y = sin(Δλ) * cos(φ2)
@@ -127,9 +133,6 @@ def _bearing(lat1, lon1, lat2, lon2):
     return atan2(y, x)
 
 def bearing_degrees(lat1, lon1, lat2, lon2) -> float:
-    """
-    Returns the initial bearing from point1→point2, as a degree in [0,360).
-    """
     # 1) get bearing in radians
     rad = _bearing(lat1, lon1, lat2, lon2)
     # 2) convert to degrees
@@ -137,11 +140,10 @@ def bearing_degrees(lat1, lon1, lat2, lon2) -> float:
     # 3) normalize to [0, 360)
     return (deg + 360) % 360
 
+# this function is the main way we combine our two datasets. it takes 3 coordinate pairs, pair1 and pair2
+# are route coordinates for a bird's flight path, and pair3 is the location of a power plant. this code
+# gets the minimum distance to the generator from either point or anywhere along the line between the two points.
 def min_distance_to_path(lat1, lon1, lat2, lon2, lat3, lon3):
-    """
-    Returns the minimum distance (in kilometers) from point 3 to the
-    segment between point 1 and point 2 on the Earth’s surface.
-    """
     R = 6371.0  # Earth radius in km
 
     # angular distances and bearings
